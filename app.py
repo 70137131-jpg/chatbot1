@@ -1,29 +1,23 @@
 import os
-from dotenv import load_dotenv
 import google.generativeai as genai
 from flask import Flask, render_template, request, jsonify
 
-# Load .env file
-load_dotenv()
-
+# Get API key and model name from environment variables
 api_key = os.getenv("GEMINI_API_KEY")
-model_name = os.getenv("GEMINI_MODEL")
+model_name = os.getenv("GEMINI_MODEL", "gemini-pro") # Default to gemini-pro
 
+# Check for API key
 if not api_key:
-    raise RuntimeError(
-        "Missing GEMINI_API_KEY. Add it to your .env file or export it in the shell."
-    )
+    # This will cause the function to fail cleanly if the key is not set
+    raise RuntimeError("GEMINI_API_KEY environment variable not set.")
 
-if not model_name:
-    model_name = "gemini-pro" # Default to gemini-pro if not set
-
-print("Environment configured successfully.")
-
-# Initialize the generative model
-genai.configure(api_key=api_key)
-model = genai.GenerativeModel(model_name)
-
-print(f"Using model: {model_name}")
+# Configure the generative AI model
+try:
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(model_name)
+except Exception as e:
+    # This will help diagnose issues with the API key or model configuration
+    raise RuntimeError(f"Failed to configure GenerativeModel: {e}")
 
 app = Flask(__name__)
 
@@ -33,15 +27,27 @@ def index():
 
 @app.route("/chat", methods=["POST"])
 def chat():
-    user_input = request.json.get("message")
+    # Ensure the request is JSON
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"}), 415
+
+    data = request.get_json()
+    user_input = data.get("message")
+
     if not user_input:
         return jsonify({"error": "Missing message"}), 400
 
     try:
         response = model.generate_content(user_input)
-        return jsonify({"response": response.text})
+        # Check if the response has text, handle cases where it might not
+        if hasattr(response, 'text'):
+            return jsonify({"response": response.text})
+        else:
+            # Log or handle cases where the response is not as expected
+            return jsonify({"error": "Received an unexpected response from the model."}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(debug=True)
+        # More detailed error logging for debugging
+        # In a real app, you'd use a proper logger
+        error_message = f"An error occurred: {str(e)}"
+        # Avoid exposing detailed internal errors to the client
+        return jsonify({"error": "An internal error occurred."}), 500
